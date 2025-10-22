@@ -1,0 +1,111 @@
+{{- $common := .Values.common }}
+{{- $defaults := .Values.defaults }}
+{{- $env := .Values.env }}
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: apps-{{ $env.shortName }}
+  namespace: argocd
+spec:
+  goTemplate: true
+    #goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - git:
+              repoURL: {{ $common.repoApps }} 
+            #   revision: HEAD
+              revision: 'main'
+              files:
+                - path: 'apps/**/argocd.app.{{ $env.shortName }}.yaml'
+          - list:
+              elements: []
+              elementsYaml: "{{`{{ .app | toJson }}`}}"
+            selector:
+              matchLabels:
+                enabled: 'true'
+  
+  template:
+    metadata:
+      name: '{{`{{ .path.basename }}`}}-{{ $env.shortName }}'
+      labels:
+        env: {{ $env.shortName }}
+        service: '{{`{{ .path.basename }}`}}'
+        typeApp: 'apps' 
+    #   annotations:
+    #     notifications.argoproj.io/subscribe.on-deployed.slack: "argocdnotification"
+    #     notifications.argoproj.io/subscribe.on-sync-succeeded.slack: "argocdnotification"
+    #     notifications.argoproj.io/subscribe.on-sync-failed.slack: "argocdnotification"
+    spec:
+      destination:
+        server: '{{ $env.address }}'
+        namespace: '{{`{{ .namespace }}`}}'      
+      project: '{{`{{ .project }}`}}'
+      sources:
+        - helm:
+            valueFiles:
+              - 'values.yaml'
+              - 'values/values.{{ $env.shortName }}.yaml'
+          path: '{{`{{ .path.path }}`}}'
+          repoURL: '{{ $common.repoApps }}'
+          targetRevision: '{{`{{ .targetRevision }}`}}'
+        # - repoURL: '{{ $common.repoGitURL }}/{{`{{ .sourceTag.optionalName | default .path.basename }}`}}' 
+        #   targetRevision: '{{`{{ .sourceTag.targetRevision }}`}}'
+        #   ref: value
+      syncPolicy:
+        {{- if $env.syncPolicy.automated.enabled }}
+        automated:
+          {{- if $env.syncPolicy.automated.prune }}
+          prune: true
+          {{- end }}
+          {{- if $env.syncPolicy.automated.selfHeal }}
+          selfHeal: true
+          {{- end }}
+          {{- if $env.syncPolicy.automated.allowEmpty }}
+          allowEmpty: true
+          {{- end }}
+        {{- end }}
+        syncOptions:
+          - ServerSideApply=
+             {{- if $env.syncPolicy.syncOptions -}}
+              {{- if $env.syncPolicy.syncOptions.serverSideApply -}}
+                {{- $env.syncPolicy.syncOptions.serverSideApply -}}
+              {{- else -}}
+                {{- $defaults.syncPolicy.syncOptions.serverSideApply -}}
+              {{- end }}
+             {{- else -}}
+               {{- $defaults.syncPolicy.syncOptions.serverSideApply -}}
+             {{- end }}
+          - CreateNamespace=
+             {{- if $env.syncPolicy.syncOptions -}}
+               {{- if $env.syncPolicy.syncOptions.createNamespace -}}
+                 {{- $env.syncPolicy.syncOptions.createNamespace -}}
+               {{- else -}}
+                 {{- $defaults.syncPolicy.syncOptions.createNamespace -}}
+               {{- end }}
+             {{- else -}}
+               {{- $defaults.syncPolicy.syncOptions.createNamespace -}}
+             {{- end }}
+  templatePatch: |
+    {{`{{- with .annotations }}`}}
+    metadata:
+      annotations:
+      {{`{{- toYaml . | nindent 8 }}`}}
+    {{`{{- end }}`}}  
+    spec:
+     
+    {{`{{- if .autoSync }}`}}
+      syncPolicy:
+        automated:
+          prune: {{ `{{ .prune }}`}}
+    {{`{{- end }}`}}
+      ignoreDifferences:
+        {{`{{- range .ignoreDifferences }}`}}
+          {{`- group: {{.group}}`}}
+            {{`kind: {{.kind }}`}}
+            {{`jsonPointers:`}}
+            {{`{{- range .jsonPointers }}`}}
+              {{`- {{ . }}`}}
+            {{`{{- end }}`}}
+
+        {{`{{- end }}`}}
