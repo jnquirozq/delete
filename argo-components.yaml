@@ -1,0 +1,115 @@
+{{- $common := .Values.common }}
+{{- $defaults := .Values.defaults }}
+{{- $env := .Values.env }}
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: "components-{{ $env.shortName }}"
+  namespace: argocd
+spec:
+  goTemplate: true
+    #goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:  
+          - git:
+              files:
+                - path: 'components/**/argocd.cmp.{{ $env.shortName }}.yaml'
+              repoURL: {{ $common.repoApps }} 
+              revision: 'main'
+          - list:
+              elements: []
+              elementsYaml: "{{`{{ .app | toJson }}`}}"
+            selector:
+              matchLabels:
+                enabled: 'true'
+  template:
+    metadata:
+      name: '{{`{{ .path.basename }}`}}-{{ $env.shortName }}'
+      labels:
+        env: {{ $env.shortName }}
+        typeApp: 'components' 
+    spec:
+      destination:
+        server: '{{ $env.address }}'
+        namespace: '{{`{{ .namespace }}`}}'
+      project: '{{`{{ .project }}`}}'
+      source:
+        path: '{{`{{ .path.path }}`}}/overlay/{{ $env.fullName }}'
+        repoURL: '{{ $common.repoApps }}' # If we want to use a different repo for infra, we can add a new value in values.yaml
+        targetRevision: '{{`{{ .targetRevision | default "main" }}`}}' 
+        # helm:
+        #   valueFiles:
+        #     - values.yaml
+      syncPolicy:
+        {{- if $env.syncPolicy.automated.enabled }}
+        automated:
+          {{- if $env.syncPolicy.automated.prune }}
+          prune: true
+          {{- end }}
+          {{- if $env.syncPolicy.automated.selfHeal }}
+          selfHeal: true
+          {{- end }}
+          {{- if $env.syncPolicy.automated.allowEmpty }}
+          allowEmpty: true
+          {{- end }}
+        {{- end }}
+        syncOptions:
+          - ServerSideApply=
+             {{- if $env.syncPolicy.syncOptions -}}
+              {{- if $env.syncPolicy.syncOptions.serverSideApply -}}
+                {{- $env.syncPolicy.syncOptions.serverSideApply -}}
+              {{- else -}}
+                {{- $defaults.syncPolicy.syncOptions.serverSideApply -}}
+              {{- end }}
+             {{- else -}}
+               {{- $defaults.syncPolicy.syncOptions.serverSideApply -}}
+             {{- end }}
+          - CreateNamespace=
+             {{- if $env.syncPolicy.syncOptions -}}
+               {{- if $env.syncPolicy.syncOptions.createNamespace -}}
+                 {{- $env.syncPolicy.syncOptions.createNamespace -}}
+               {{- else -}}
+                 {{- $defaults.syncPolicy.syncOptions.createNamespace -}}
+               {{- end }}
+             {{- else -}}
+               {{- $defaults.syncPolicy.syncOptions.createNamespace -}}
+             {{- end }}
+  templatePatch: |
+    {{`{{- with .annotations }}`}}
+    metadata:
+      annotations:
+      {{`{{- toYaml . | nindent 8 }}`}}
+    {{`{{- end }}`}}
+    spec:
+      {{`{{- if .values }}`}}
+      source:
+        path: '{{`{{ .path.path }}`}}'
+        helm:
+          valueFiles:
+          {{`{{- range .values }}`}}
+            {{`- {{ . }}`}}
+          {{`{{- end }}`}}
+      {{`{{- end }}`}}
+    {{`{{- if .autoSync }}`}}
+      syncPolicy:
+        automated:
+          prune: {{ `{{ .prune }}` }}
+    {{`{{- end }}`}}
+      ignoreDifferences:
+        {{`{{- range .ignoreDifferences }}`}}
+          {{`- group: {{.group}}`}}
+            {{`kind: {{.kind }}`}}
+            {{`{{- if .jsonPointers }}`}}
+            {{`jsonPointers:`}}
+            {{`{{- range .jsonPointers }}`}}
+              {{`- {{ . }}`}}
+            {{`{{- end }}`}}
+            {{`{{- end }}`}}
+            {{`{{- if .jqPathExpressions }}`}}
+            {{`jqPathExpressions:`}}
+            {{`{{- range .jqPathExpressions }}`}}
+              {{`- {{ . }}`}}
+            {{`{{- end }}`}}
+            {{`{{- end }}`}}
+        {{`{{- end }}`}}
